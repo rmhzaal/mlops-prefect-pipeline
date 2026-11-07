@@ -1,0 +1,6 @@
+prefect
+pandas
+scikit-learn
+joblib
+boto3
+python-dotenv
