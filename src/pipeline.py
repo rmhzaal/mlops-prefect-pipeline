@@ -1,11 +1,40 @@
 import json
+import os
+
 import joblib
+import requests
+from dotenv import load_dotenv
 from prefect import flow, task, get_run_logger
 from sklearn.datasets import load_breast_cancer
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+load_dotenv()
+TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL")
+
+
+def notify_teams_failure(flow, flow_run, state):
+    if not TEAMS_WEBHOOK_URL:
+        return
+    payload = {
+        "type": "message",
+        "attachments": [{
+            "contentType": "application/vnd.microsoft.card.adaptive",
+            "content": {
+                "type": "AdaptiveCard",
+                "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                "version": "1.4",
+                "body": [
+                    {"type": "TextBlock", "text": "\U0001F534 ml-pipeline flow run failed", "weight": "bolder", "size": "medium"},
+                    {"type": "TextBlock", "text": f"Flow run: {flow_run.name}", "wrap": True},
+                    {"type": "TextBlock", "text": f"State: {state.name}", "wrap": True},
+                ],
+            },
+        }],
+    }
+    requests.post(TEAMS_WEBHOOK_URL, json=payload, timeout=10)
 
 
 @task(retries=2, retry_delay_seconds=10)
@@ -49,7 +78,7 @@ def save_artifacts(model, scaler, metrics):
         json.dump(metrics, f, indent=2)
 
 
-@flow(name="ml-pipeline")
+@flow(name="ml-pipeline", on_failure=[notify_teams_failure])
 def ml_pipeline():
     X_train, X_test, y_train, y_test, scaler = load_and_preprocess()
     model = train_model(X_train, y_train)
