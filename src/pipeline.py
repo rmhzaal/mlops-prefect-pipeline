@@ -1,8 +1,11 @@
+import io
 import json
 import os
 
+import boto3
 import joblib
 import requests
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 from prefect import flow, task, get_run_logger
 from sklearn.datasets import load_breast_cancer
@@ -12,11 +15,25 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 load_dotenv()
-TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL")
+AWS_REGION = os.getenv("AWS_REGION", "eu-west-2")
+S3_BUCKET_NAME = os.getenv("S3_BUCKET_NAME")
+TEAMS_WEBHOOK_SECRET_NAME = os.getenv("TEAMS_WEBHOOK_SECRET_NAME", "mlops-prefect-pipeline/teams-webhook-url")
+
+secrets_client = boto3.client("secretsmanager", region_name=AWS_REGION)
+s3_client = boto3.client("s3", region_name=AWS_REGION)
+
+
+def get_teams_webhook_url():
+    try:
+        response = secrets_client.get_secret_value(SecretId=TEAMS_WEBHOOK_SECRET_NAME)
+        return response["SecretString"]
+    except ClientError:
+        return None
 
 
 def notify_teams_failure(flow, flow_run, state):
-    if not TEAMS_WEBHOOK_URL:
+    webhook_url = get_teams_webhook_url()
+    if not webhook_url:
         return
     payload = {
         "type": "message",
@@ -34,7 +51,7 @@ def notify_teams_failure(flow, flow_run, state):
             },
         }],
     }
-    requests.post(TEAMS_WEBHOOK_URL, json=payload, timeout=10)
+    requests.post(webhook_url, json=payload, timeout=10)
 
 
 @task(retries=2, retry_delay_seconds=10)
@@ -70,12 +87,23 @@ def evaluate_model(model, X_test, y_test):
     return metrics
 
 
-@task
+@task(retries=2, retry_delay_seconds=10)
 def save_artifacts(model, scaler, metrics):
-    joblib.dump(model, "models/model.joblib")
-    joblib.dump(scaler, "models/scaler.joblib")
-    with open("models/metrics.json", "w") as f:
-        json.dump(metrics, f, indent=2)
+    logger = get_run_logger()
+
+    model_buffer = io.BytesIO()
+    joblib.dump(model, model_buffer)
+    model_buffer.seek(0)
+
+    scaler_buffer = io.BytesIO()
+    joblib.dump(scaler, scaler_buffer)
+    scaler_buffer.seek(0)
+
+    s3_client.put_object(Bucket=S3_BUCKET_NAME, Key="models/model.joblib", Body=model_buffer.getvalue())
+    s3_client.put_object(Bucket=S3_BUCKET_NAME, Key="models/scaler.joblib", Body=scaler_buffer.getvalue())
+    s3_client.put_object(Bucket=S3_BUCKET_NAME, Key="models/metrics.json", Body=json.dumps(metrics, indent=2))
+
+    logger.info(f"Artifacts written to s3://{S3_BUCKET_NAME}/models/")
 
 
 @flow(name="ml-pipeline", on_failure=[notify_teams_failure])
