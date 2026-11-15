@@ -24,15 +24,6 @@ resource "aws_s3_bucket" "pipeline_data" {
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "pipeline_data" {
-  bucket = aws_s3_bucket.pipeline_data.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
-}
-
 resource "aws_secretsmanager_secret" "teams_webhook" {
   name        = "${var.project_name}/teams-webhook-url"
   description = "Teams Workflows webhook URL used by the Prefect flow's failure alert"
