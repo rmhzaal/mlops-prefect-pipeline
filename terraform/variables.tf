@@ -15,3 +15,8 @@ variable "teams_webhook_url" {
   type        = string
   sensitive   = true
 }
+
+variable "my_ip_cidr" {
+  description = "Public IP in CIDR form (e.g. 1.2.3.4/32), restricts access to the Prefect server"
+  type        = string
+}
